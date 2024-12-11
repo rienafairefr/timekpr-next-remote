@@ -1,3 +1,5 @@
+import logging
+
 from flask import Flask, render_template, send_from_directory
 
 import conf
@@ -5,7 +7,7 @@ import main
 import os
 
 app = Flask(__name__)
-
+logger = logging.getLogger(__name__)
 
 def validate_request(computer, user):
     if computer not in conf.trackme:
@@ -81,4 +83,7 @@ def favicon():
 
 
 if __name__ == "__main__":
+    logging_level = getattr(logging, os.environ.get('LOGGER_LEVEL', 'INFO'))
+    logging.basicConfig(level=logging_level)
+    logging.getLogger("paramiko").setLevel(logging_level)  # for example
     app.run(host="0.0.0.0", port=8080)
