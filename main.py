@@ -2,6 +2,8 @@
 # Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
 import logging
 
+from retry import retry
+
 import conf, re, humanize
 from fabric import Connection
 from paramiko.ssh_exception import AuthenticationException
@@ -13,8 +15,10 @@ def get_config():
     return conf.trackme
 
 
-def send_alert(user, action, seconds, computer, ssh):
-    logger.info(f'send_alert {user=} {action=} {seconds=} {computer=}')
+def send_alert(user, action, seconds, host, label, ssh: Connection):
+    logger.info(f'send_alert {user=} {action=} {seconds=} {host=} {label=}')
+    if not hasattr(conf, 'gotify'):
+        return True
     for alerts in conf.gotify:
         if alerts["enabled"] is True:
             gotify = Gotify(
@@ -22,7 +26,7 @@ def send_alert(user, action, seconds, computer, ssh):
                 app_token=alerts["token"],
             )
             try:
-                usage = get_usage(user, computer, ssh)
+                usage = get_usage(user, host, ssh)
                 added = humanize.naturaldelta(seconds)
                 unused = humanize.precisedelta(usage["time_left"])
                 used = humanize.precisedelta(usage["time_spent"])
@@ -38,51 +42,65 @@ def send_alert(user, action, seconds, computer, ssh):
     return True
 
 
-def get_usage(user, computer, ssh):
-    # to do - maybe check if user is in timekpr first? (/usr/bin/timekpra --userlist)
-    global timekpra_userinfo_output
+class Retry(Exception):
+    pass
+
+
+@retry(exceptions=(Retry, ), jitter=1.5, tries=3, backoff=1.5, max_delay=10)
+def do_get_usage(user: str, host: str, ssh: Connection):
     fail_json = {"time_left": 0, "time_spent": 0, "result": "fail"}
     try:
-        timekpra_userinfo_output = str(
-            ssh.run(conf.ssh_timekpra_bin + " --userinfo " + user, hide=True)
-        )
+        result = ssh.run(conf.ssh_timekpra_bin + " --userinfo " + user, hide=True)
+        timekpra_userinfo_output = str(result)
     except NoValidConnectionsError as e:
         logger.error(
-            f"Cannot connect to SSH server on host '{computer}'. "
+            f"Cannot connect to SSH server on host '{host}'. "
             f"Check address in conf.py or try again later."
         )
-        return fail_json
+        return False, fail_json
     except AuthenticationException as e:
         logger.error(
-            f"Wrong credentials for user '{conf.ssh_user}' on host '{computer}'. "
-            f"Check `ssh_user` and `ssh_password` credentials in conf.py."
+            f"Wrong credentials for user '{conf.ssh_user}' on host '{host}'. "
+            f"Check ssh_user and ssh_password credentials in conf.py."
         )
-        return fail_json
+        return False, fail_json
     except Exception as e:
         logger.error(
-            f"Error logging in as user '{conf.ssh_user}' on host '{computer}', check conf.py. \n\n\t"
+            f"Error logging in as user '{conf.ssh_user}' on host '{host}', check conf.py. \n\n\t"
             + str(e)
         )
-        return fail_json
+        return False, fail_json
+
     search = r"(TIME_LEFT_DAY: )([0-9]+)"
-    time_left = re.search(search, timekpra_userinfo_output)
+    time_left = re.search(search, result.stdout)
     search = r"(TIME_SPENT_DAY: )([0-9]+)"
-    time_spent = re.search(search, timekpra_userinfo_output)
-    # todo - better handle "else" when we can't find time remaining
+    time_spent = re.search(search, result.stdout)
+
+    if 'is already running for user' in result.stdout:
+        raise Retry()
+
     if not time_left or not time_left.group(2):
         logger.error(
             f"Error getting time left, setting to 0. ssh call result: "
-            + str(timekpra_userinfo_output)
+            + timekpra_userinfo_output
         )
-        return fail_json
-    else:
-        time_left = str(time_left.group(2))
-        time_spent = str(time_spent.group(2))
-        logger.info(f"Time left for {user} at {computer}: {time_left}")
-        return {"time_left": time_left, "time_spent": time_spent, "result": "success"}
+        return False, fail_json
+    time_left = str(time_left.group(2))
+    time_spent = str(time_spent.group(2))
+    return True, (time_left, time_spent)
+
+def get_usage(user: str, host: str, ssh: Connection):
+    # to do - maybe check if user is in timekpr first? (/usr/bin/timekpra --userlist)
+    ok, data = do_get_usage(user, host, ssh)
+    if not ok:
+        return data
+    time_left, time_spent = data
+
+    logger.info(f"Time left for {user} at {host}: {time_left}")
+    return {"time_left": time_left, "time_spent": time_spent, "result": "success"}
 
 
-def get_connection(computer):
+def get_connection(host) -> Connection:
     global connection
     # todo handle SSH keys instead of forcing it to be passsword only
     connect_kwargs = {
@@ -92,49 +110,47 @@ def get_connection(computer):
     }
     try:
         connection = Connection(
-            host=computer, user=conf.ssh_user, connect_kwargs=connect_kwargs, connect_timeout=10
+            host=host, user=conf.ssh_user, connect_kwargs=connect_kwargs, connect_timeout=10
         )
     except AuthenticationException as e:
         logger.error(
-            f"Wrong credentials for user '{conf.ssh_user}' on host '{computer}'. "
+            f"Wrong credentials for user '{conf.ssh_user}' on host '{host}'. "
             f"Check `ssh_user` and `ssh_password` credentials in conf.py."
         )
     except Exception as e:
         logger.error(
-            f"Error logging in as user '{conf.ssh_user}' on host '{computer}', check conf.py. \n\n\t"
+            f"Error logging in as user '{conf.ssh_user}' on host '{host}', check conf.py. \n\n\t"
             + str(e)
         )
     finally:
         return connection
 
 
-def adjust_time(up_down_string, seconds, ssh: Connection, user, computer):
-    command = (
-        conf.ssh_timekpra_bin
-        + " --settimeleft "
-        + user
-        + " "
-        + up_down_string
-        + " "
-        + str(seconds)
-    )
+def adjust_time(up_down_string, seconds, ssh: Connection, user, host, label):
+    command = f'{conf.ssh_timekpra_bin} --settimeleft {user} {up_down_string} {seconds}'
     ssh.run(command)
     if up_down_string == "-":
         action = "removed"
+    elif up_down_string == "":
+        action = "set"
     else:
         action = "added"
     logger.info(f"{action} {seconds} for user '{user}'")
     try:
-        send_alert(user, action, seconds, computer, ssh)
+        send_alert(user, action, seconds, host, label, ssh)
     except Exception as e:
         logger.error(f"Failed to send alert: {e}")
     # todo - return false if this fails
     return True
 
 
-def increase_time(seconds, ssh: Connection, user, computer):
-    return adjust_time("+", seconds, ssh, user, computer)
+def increase_time(seconds, ssh: Connection, user, host, label):
+    return adjust_time("+", seconds, ssh, user, host, label)
 
 
-def decrease_time(seconds, ssh: Connection, user, computer):
-    return adjust_time("-", seconds, ssh, user, computer)
+def decrease_time(seconds, ssh: Connection, user, host, label):
+    return adjust_time("-", seconds, ssh, user, host, label)
+
+
+def set_time(seconds, ssh: Connection, user, host, label):
+    return adjust_time("", seconds, ssh, user, host, label)
