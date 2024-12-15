@@ -16,9 +16,8 @@ for extra_dir in extra_dirs:
             if path.isfile(filename):
                 extra_files.append(filename)
 
-# app.run(host="0.0.0.0", port=8080, use_reloader=True, extra_files=extra_files)
-
-
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.debug = True
 server = Server(app.wsgi_app)
 for file in extra_files:
     server.watch(file)
