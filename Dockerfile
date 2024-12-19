@@ -1,7 +1,27 @@
+FROM python:3.12 AS base
+WORKDIR /opt/poetry
+RUN python3 -m venv .
+ENV PATH="/opt/poetry/bin:$PATH"
+RUN pip install --upgrade pip && pip install poetry==1.8.3
+RUN poetry --version
+
+WORKDIR /src
+RUN python3 -m venv --copies /venv
+RUN /venv/bin/pip install --upgrade pip wheel
+RUN poetry config virtualenvs.create false
+COPY poetry.lock pyproject.toml ./
+
+RUN poetry export -f requirements.txt -o requirements-base.txt
+RUN grep 'git\+' requirements-base.txt > requirements-vcs.txt || test $? = 1
+RUN grep 'git\+' -v requirements-base.txt > requirements-hashed.txt || test $? = 1
+RUN /venv/bin/pip install --no-deps -r requirements-vcs.txt
+RUN /venv/bin/pip install -r requirements-hashed.txt
+FROM base AS dev
+
 FROM python:3.12-slim
+ENV PATH="/venv/bin:$PATH" PYTHONUNBUFFERED=1 VIRTUAL_ENV="/venv"
+COPY --from=base /venv /venv
 RUN mkdir /app
-COPY requirements.txt .
-RUN pip3 install -r requirements.txt
 COPY . /app
 WORKDIR /app
 CMD [ "python3", "./timekpr-next-web.py"]

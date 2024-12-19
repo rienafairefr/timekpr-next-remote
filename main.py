@@ -46,12 +46,16 @@ class Retry(Exception):
     pass
 
 
+
+
+fail_json = {"time_left": 0, "time_spent": 0, "result": "fail"}
+
+
 @retry(exceptions=(Retry, ), jitter=1.5, tries=3, backoff=1.5, max_delay=10)
-def do_get_usage(user: str, host: str, ssh: Connection):
-    fail_json = {"time_left": 0, "time_spent": 0, "result": "fail"}
+def do_get_userinfo(user: str, host: str, ssh: Connection):
     try:
         result = ssh.run(conf.ssh_timekpra_bin + " --userinfo " + user, hide=True)
-        timekpra_userinfo_output = str(result)
+
     except NoValidConnectionsError as e:
         logger.error(
             f"Cannot connect to SSH server on host '{host}'. "
@@ -70,6 +74,19 @@ def do_get_usage(user: str, host: str, ssh: Connection):
             + str(e)
         )
         return False, fail_json
+
+    if 'is already running for user' in result.stdout:
+        raise Retry()
+
+    return True, result
+
+
+def do_get_usage(user: str, host: str, ssh: Connection):
+    ok, result = do_get_userinfo(user, host, ssh)
+    if not ok:
+        return ok, result
+
+    timekpra_userinfo_output = str(result)
 
     search = r"(TIME_LEFT_DAY: )([0-9]+)"
     time_left = re.search(search, result.stdout)
@@ -98,6 +115,15 @@ def get_usage(user: str, host: str, ssh: Connection):
 
     logger.info(f"Time left for {user} at {host}: {time_left}")
     return {"time_left": time_left, "time_spent": time_spent, "result": "success"}
+
+
+def get_user_config(user: str, host: str, ssh: Connection):
+    ok, data = do_get_userinfo(user, host, ssh)
+    if not ok:
+        return data
+
+    logger.info(f"Config for {user} at {host}: {data}")
+    return {"data": data, "result": "success"}
 
 
 def get_connection(host) -> Connection:
