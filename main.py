@@ -1,15 +1,22 @@
 # Press Shift+F10 to execute it or replace it with your code.
 # Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
 import logging
+import typing
+from typing import Tuple
 
-from retry import retry
-
-import conf, re, humanize
 from fabric import Connection
+from gotify import Gotify
+from invoke import Result
 from paramiko.ssh_exception import AuthenticationException
 from paramiko.ssh_exception import NoValidConnectionsError
-from gotify import Gotify
+from tenacity import retry, wait_random_exponential, retry_if_exception_type
+
+import conf
+import humanize
+import re
+
 logger = logging.getLogger(__name__)
+
 
 def get_config():
     return conf.trackme
@@ -46,13 +53,11 @@ class Retry(Exception):
     pass
 
 
-
-
 fail_json = {"time_left": 0, "time_spent": 0, "result": "fail"}
 
 
-@retry(exceptions=(Retry, ), jitter=1.5, tries=3, backoff=1.5, max_delay=10)
-def do_get_userinfo(user: str, host: str, ssh: Connection):
+@retry(retry=retry_if_exception_type(Retry), wait=wait_random_exponential(multiplier=1.2, max=60))
+def get_user_info(user: str, host: str, ssh: Connection) -> Tuple[bool, typing.Union[Result, typing.Dict]]:
     try:
         result = ssh.run(conf.ssh_timekpra_bin + " --userinfo " + user, hide=True)
 
@@ -82,7 +87,7 @@ def do_get_userinfo(user: str, host: str, ssh: Connection):
 
 
 def do_get_usage(user: str, host: str, ssh: Connection):
-    ok, result = do_get_userinfo(user, host, ssh)
+    ok, result = get_user_info(user, host, ssh)
     if not ok:
         return ok, result
 
@@ -106,6 +111,7 @@ def do_get_usage(user: str, host: str, ssh: Connection):
     time_spent = str(time_spent.group(2))
     return True, (time_left, time_spent)
 
+
 def get_usage(user: str, host: str, ssh: Connection):
     # to do - maybe check if user is in timekpr first? (/usr/bin/timekpra --userlist)
     ok, data = do_get_usage(user, host, ssh)
@@ -117,17 +123,7 @@ def get_usage(user: str, host: str, ssh: Connection):
     return {"time_left": time_left, "time_spent": time_spent, "result": "success"}
 
 
-def get_user_config(user: str, host: str, ssh: Connection):
-    ok, data = do_get_userinfo(user, host, ssh)
-    if not ok:
-        return data
-
-    logger.info(f"Config for {user} at {host}: {data}")
-    return {"data": data, "result": "success"}
-
-
 def get_connection(host) -> Connection:
-    global connection
     # todo handle SSH keys instead of forcing it to be passsword only
     connect_kwargs = {
         "allow_agent": False,
