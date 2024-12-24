@@ -14,6 +14,7 @@ gotify = "^0.6.0"
 humanize = "^4.11.0"
 tenacity = "^9.0.0"
 timekpr-next = {git = "https://github.com/rienafairefr/timekpr-next.git"}
+dbus-python = "^1.3.2"
 
 
 [tool.poetry.group.dev.dependencies]
