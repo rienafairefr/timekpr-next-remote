@@ -57,39 +57,38 @@ fail_json = {"time_left": 0, "time_spent": 0, "result": "fail"}
 
 
 @retry(retry=retry_if_exception_type(Retry), wait=wait_random_exponential(multiplier=1.2, max=60))
-def get_user_info(user: str, host: str, ssh: Connection) -> Tuple[bool, typing.Union[Result, typing.Dict]]:
+def run_with_retry(cmd: str, host: str, ssh: Connection) -> Tuple[bool, typing.Union[Result, typing.Dict]]:
     try:
-        result = ssh.run(conf.ssh_timekpra_bin + " --userinfo " + user, hide=True)
+        result = ssh.run(conf.ssh_timekpra_bin + " " + cmd, hide=True)
 
     except NoValidConnectionsError as e:
         logger.error(
             f"Cannot connect to SSH server on host '{host}'. "
             f"Check address in conf.py or try again later."
         )
-        return False, fail_json
+        return False, {}
     except AuthenticationException as e:
         logger.error(
             f"Wrong credentials for user '{conf.ssh_user}' on host '{host}'. "
             f"Check ssh_user and ssh_password credentials in conf.py."
         )
-        return False, fail_json
+        return False, {}
     except Exception as e:
         logger.error(
             f"Error logging in as user '{conf.ssh_user}' on host '{host}', check conf.py. \n\n\t"
             + str(e)
         )
-        return False, fail_json
+        return False, {}
 
     if 'is already running for user' in result.stdout:
         raise Retry()
 
     return True, result
 
-
 def do_get_usage(user: str, host: str, ssh: Connection):
-    ok, result = get_user_info(user, host, ssh)
+    ok, result = run_with_retry(f"--userinfo {user}", host, ssh)
     if not ok:
-        return ok, result
+        return ok, fail_json
 
     timekpra_userinfo_output = str(result)
 

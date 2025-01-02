@@ -2,14 +2,12 @@ import logging
 import os
 import tempfile
 import time
-from io import StringIO
-from pprint import pprint
 
-from fabric import Connection, Result
+from fabric import Connection
+from timekpr.common.utils.config import timekprUserConfig
 
 import conf
 import main
-from timekpr.common.utils.config import timekprUserConfig
 
 logger = logging.getLogger(__name__)
 
@@ -69,18 +67,41 @@ def sync():
                     for key, value in user_config._timekprUserConfig.items():
                         logger.info(f'{key} = {value}')
 
-                    for key, value in to_send.items():
-                        # noinspection PyProtectedMember
-                        config_value = user_config._timekprUserConfig[key]
-                        cmd = f"{conf.ssh_timekpra_bin} {value} {config_value}"
-                        result: Result = ssh.run(cmd)
-                        if result.ok:
-                            logger.info(f'OK pushed {key} ({value})')
-                        else:
-                            logger.error(f'error {key}')
-                            logger.error(cmd)
+                    ok, actual_user_info = main.run_with_retry(f"--userinfo {user}", computer, ssh)
+                    if ok:
+                        logger.info(actual_user_info)
+                        actual_user_info_dict = {}
 
-                    logger.info(main.get_user_info(user, computer, ssh))
+                        for line in actual_user_info.stdout.splitlines():
+                            line = line.strip()
+                            try:
+                                key, value = line.split(': ', maxsplit=1)
+                                actual_user_info_dict[key] = value
+                            except ValueError:
+                                pass
+
+                        for key, value in to_send.items():
+                            # noinspection PyProtectedMember
+                            config_value = user_config._timekprUserConfig[key]
+                            cmd = f"{value} {config_value}"
+                            logger.info(('to_send', key, config_value))
+                            logger.info(('actual', key, actual_user_info_dict[key]))
+
+                            if actual_user_info_dict[key] != str(config_value):
+                                logger.info(('sending', key, config_value))
+
+                            # ok, data = main.run_with_retry(cmd, computer, ssh)
+#
+                            # if ok:
+                            #    logger.info(f'OK pushed {key} ({value})')
+                            # else:
+                            #    logger.error(f'error {key}')
+                            #    logger.error(cmd)
+
+                    ok, user_info = main.run_with_retry(f"--userinfo {user}", computer, ssh)
+                    if ok:
+                        logger.info(user_info)
+
                     ok, data = main.do_get_usage(user, computer, ssh)
                     if ok:
                         time_left, _ = data
