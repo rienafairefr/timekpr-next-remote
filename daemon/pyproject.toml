@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "timekpr-next-remote-daemon"
+version = "0.1.0"
+description = ""
+authors = ["Matthieu Berthomé <cheery.iron6016@fastmail.com>"]
+readme = "README.md"
+packages= [
+    { include= "timekpr_remote" }
+]
+
+
+[tool.poetry.dependencies]
+python = "^3.9"
+
+
+[tool.poetry.group.dev.dependencies]
+build = "^1.2.2.post1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+timekpr-remote-daemon = "timekpr_remote.daemon:main"

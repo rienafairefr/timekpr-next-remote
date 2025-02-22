@@ -5,3 +5,12 @@ __pycache__
 ssh.pub
 .idea
 .env
+/daemon/debian/files
+/daemon/debian/.debhelper
+/daemon/debian/python3-timekpr-next-remote-daemon/
+/daemon/debian/timekpr-next-remote-daemon/
+/daemon/debian/timekpr-next-remote-daemon.*
+/daemon/.pybuild
+/daemon/dist
+timekpr-next-remote-daemon_0.1.0*
+!/daemon/debian/timekpr-next-remote-daemon.service

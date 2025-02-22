@@ -1,0 +1,7 @@
+export DH_VERBOSE=1
+export PYBUILD_NAME=timekpr-next-remote-daemon
+export PYBUILD_SYSTEM=pyproject
+export PYBUILD_INSTALL_ARGS="--install-lib=/usr/share/timekpr-next-remote-daemon/ --prefix=/usr --install-scripts=/usr/share/timekpr-next-remote-daemon/"
+
+%:
+	dh $@ --with python3 --buildsystem=pybuild --with systemd
